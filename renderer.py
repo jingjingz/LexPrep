@@ -23,6 +23,24 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 HAVE_SOFFICE = shutil.which("soffice") is not None
 
+# ── helper: quick visible-text length for an RTF file ────────────────────────
+_RTF_CTRL_RE = re.compile(r"{\\.*?}|\\[A-Za-z]+\d* ?")   # rudimentary strip
+
+def _plain_text_len(rtf_path: Path) -> int:
+    """
+    Approximate the number of visible characters in an RTF file.
+    Used to sanity-check Pandoc output.
+    """
+    try:
+        raw = rtf_path.read_text(errors="ignore")
+        visible = _RTF_CTRL_RE.sub("", raw)
+        return len(visible.strip())
+    except Exception:
+        return 0
+        
+        
+        
+# ── NEW helper: DOCX → RTF via Pandoc ─────────────────────────────────────────
 def _convert_with_pandoc(docx: Path, rtf: Path) -> None:
     if shutil.which("pandoc") is None:
         raise FileNotFoundError("pandoc not on PATH")
