@@ -16,6 +16,7 @@ from typing import Tuple
 
 from docxtpl import DocxTemplate
 import pypandoc
+import logging
 
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
