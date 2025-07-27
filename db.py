@@ -67,8 +67,14 @@ def init_db() -> None:
     if "doc_name" not in [row[1] for row in cur.fetchall()]:
         cur.execute("ALTER TABLE cases ADD COLUMN doc_name TEXT")
 
+    # add is_active column to templates (soft-delete flag)
+    cur.execute("PRAGMA table_info(templates)")
+    if "is_active" not in [row[1] for row in cur.fetchall()]:
+        cur.execute("ALTER TABLE templates ADD COLUMN is_active INTEGER DEFAULT 1")
+
     conn.commit()
     conn.close()
+    
 
 
 # initialize schema when module loads
@@ -97,10 +103,17 @@ def insert_template(
     return cur.lastrowid
 
 
-def list_templates() -> List[sqlite3.Row]:
+
+def list_templates(active_only: bool = True) -> List[sqlite3.Row]:
     cur = get_conn().cursor()
-    cur.execute("SELECT * FROM templates ORDER BY created_at DESC;")
+    if active_only:
+        cur.execute(
+            "SELECT * FROM templates WHERE is_active = 1 ORDER BY created_at DESC"
+        )
+    else:  # include archived templates
+        cur.execute("SELECT * FROM templates ORDER BY created_at DESC")
     return cur.fetchall()
+
 
 
 # ──────────────────────────────

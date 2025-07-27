@@ -266,19 +266,16 @@ if PAGE == "Create Template":
             # ---------- fixed delete handler ----------
             if c[2].button("Delete", key=f"del_{row['id']}"):
                 conn = get_conn()
-                cur  = conn.cursor()
-
-                # 1️⃣ delete any cases that use this template
-                cur.execute("DELETE FROM cases WHERE template_id = ?", (row["id"],))
-
-                # 2️⃣ delete the template itself
-                cur.execute("DELETE FROM templates WHERE id = ?", (row["id"],))
-
+                conn.execute(
+                    "UPDATE templates SET is_active = 0 WHERE id = ?",
+                    (row["id"],),
+                )
                 conn.commit()
                 conn.close()
 
-                st.success(f"Template “{row['name']}” and its cases were deleted.")
-                st.experimental_rerun()   # refresh the list
+                st.success(f"Template “{row['name']}” archived. Existing documents retained.")
+                st.experimental_rerun()
+            
     
 
 # ════════════════════════════════════════════════════════════════════════════
