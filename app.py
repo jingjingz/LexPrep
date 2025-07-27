@@ -14,9 +14,18 @@ import json
 import os
 import re
 import tempfile
-from pathlib import Path
 import streamlit as st
+from pathlib import Path
 
+# ── Template location ─────────────────────────────────────────────────────────
+TEMPLATE_DIR = Path(__file__).parent / "default_templates"   # ← update path
+
+def load_template(name: str) -> Path:
+    """Return the full path to a stored .docx template."""
+    return TEMPLATE_DIR / f"{name}.docx"
+
+
+# ── Calculating correct time zones─────────────────────────────────────────────────────────
 from datetime import datetime
 from zoneinfo import ZoneInfo          # std-lib ≥3.9
 import re
@@ -55,15 +64,15 @@ def _to_local(iso_ts: str) -> str:
         return iso_ts
 
 
-
+# ── Title style ─────────────────────────────────────────────────────────
 st.markdown(
     """
     <style>
     .lex-title {
         font-family: 'Georgia', serif;
-        font-size: 36px;
+        font-size: 40px;
         font-weight: 600;
-        color: #2F2F2F;
+        color: #0077C8;
         margin-bottom: 0.2rem;
     }
     .lex-ver {
@@ -75,6 +84,8 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+
 
 
 # ── project modules ─────────────────────────────────────────────────────────
@@ -96,7 +107,7 @@ init_db()  # ensure tables exist BEFORE anything else
 # -------------------------------------------------------------------------
 # Built-in template seeder (only on a fresh DB)
 
-import pathlib, json
+import pathlib
 
 def _load_builtin_templates():
     if list_templates():          # DB already has templates → skip
