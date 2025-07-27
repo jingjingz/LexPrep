@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#6CACE4"        # buttons & highlights (RGB 108,172,228)
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F0F0"  # page accents (RGB 185,217,235) – optional
+textColor = "#000000"
+font = "sans serif"
