@@ -20,11 +20,23 @@ import pypandoc
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+HAVE_SOFFICE = shutil.which("soffice") is not None
 
 def _convert_with_pandoc(docx: Path, rtf: Path) -> None:
     if shutil.which("pandoc") is None:
         raise FileNotFoundError("pandoc not on PATH")
     pypandoc.convert_file(str(docx), "rtf", outputfile=str(rtf))
+    
+
+# ── NEW helper: DOCX → RTF via Pandoc ─────────────────────────────────────────
+def _convert_to_rtf(docx_in: Path, out_dir: Path) -> Path:
+    """
+    Convert a .docx file to .rtf using Pandoc (already installed on Streamlit
+    via packages.txt). Returns the path to the RTF file.
+    """
+    rtf_out = out_dir / (docx_in.stem + ".rtf")
+    pypandoc.convert_file(str(docx_in), "rtf", outputfile=str(rtf_out))
+    return rtf_out
 
 
 def _convert_with_soffice(docx: Path, rtf_dir: Path) -> None:
@@ -64,13 +76,20 @@ def render_docx_rtf(
     try:
         _convert_with_pandoc(docx_out, rtf_out)
 
-        # sanity: if visible text < 100 chars, fallback
+        # sanity-check: if visible text < 100 chars, maybe Pandoc mis-fired
         if _plain_text_len(rtf_out) < 100:
             rtf_out.unlink(missing_ok=True)
             raise RuntimeError("Pandoc produced incomplete RTF")
 
-    except Exception:
-        _convert_with_soffice(docx_out, rtf_out.parent)
-    
+    except Exception as err:
+        logging.warning("Pandoc path failed: %s", err)
 
+        if HAVE_SOFFICE:
+            logging.info("Falling back to LibreOffice (‘soffice’) conversion…")
+            _convert_with_soffice(docx_out, rtf_out.parent)
+        else:
+            # Nothing else we can do on Streamlit Cloud → re-raise to surface error
+            logging.error("LibreOffice not available – cannot convert DOCX ➜ RTF")
+            raise
+    
     return str(docx_out), str(rtf_out)
