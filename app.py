@@ -15,8 +15,46 @@ import os
 import re
 import tempfile
 from pathlib import Path
-
 import streamlit as st
+
+from datetime import datetime
+from zoneinfo import ZoneInfo          # std-lib ≥3.9
+import re
+
+# Detect the browser/host machine’s zone once
+LOCAL_TZ = datetime.now().astimezone().tzinfo
+
+def _to_local(iso_ts: str) -> str:
+    """
+    Convert an ISO-8601 timestamp that the DB stored in UTC
+    (e.g. “2025-07-27T07:07:26+00:00” or “…Z”) to the local timezone
+    and return a short, readable string like “2025-07-27 00:07”.
+
+    Handles legacy glitches such as “…+00:00Z” and “…+00:00+00:00”.
+    """
+    try:
+        # 1️⃣ Collapse the two bad patterns we introduced earlier
+        # “+00:00Z”  → “+00:00”
+        # “+00:00+00:00” → “+00:00”
+        iso_ts = re.sub(r'\+00:00(?:Z|\+00:00)$', '+00:00', iso_ts)
+
+        # 2️⃣ Normalise a plain “Z” suffix to “+00:00”
+        if iso_ts.endswith("Z"):
+            iso_ts = iso_ts[:-1] + "+00:00"
+
+        dt = datetime.fromisoformat(iso_ts)
+
+        # 3️⃣ If the string was naïve, assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+
+        # 4️⃣ Return in local zone, nice format
+        return dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        # Any parsing hiccup: fall back to the raw text
+        return iso_ts
+
+
 
 st.markdown(
     """
@@ -39,8 +77,9 @@ st.markdown(
 )
 
 
-
 # ── project modules ─────────────────────────────────────────────────────────
+
+# ===== database bootstrap =====
 from db import (
     init_db,
     insert_template,
@@ -48,8 +87,83 @@ from db import (
     get_template,
     insert_case,
     list_cases,
-    delete_case,           
+    delete_case,
+    get_conn,
 )
+
+init_db()  # ensure tables exist BEFORE anything else
+
+# -------------------------------------------------------------------------
+# Built-in template seeder (only on a fresh DB)
+
+import pathlib, json
+
+def _load_builtin_templates():
+    if list_templates():          # DB already has templates → skip
+        return
+
+    tpl_dir = pathlib.Path(__file__).parent / "default_templates"
+
+    builtins = [
+        {
+            "name": "NDA (Mutual)",
+            "file": "nda_template.docx",
+            "description": "Standard mutual non-disclosure agreement",
+            "manifest": {
+                "fields": [
+                    {"key": "effective_date",   "type": "date"},
+                    {"key": "disclosing_party", "type": "text"},
+                    {"key": "receiving_party",  "type": "text"},
+                    {"key": "term_years",       "type": "number"},
+                ]
+            },
+        },
+        {
+            "name": "Residential Lease",
+            "file": "lease_template.docx",
+            "description": "Simple one-year residential lease",
+            "manifest": {
+                "fields": [
+                    {"key": "landlord_name",    "type": "text"},
+                    {"key": "tenant_name",      "type": "text"},
+                    {"key": "property_address", "type": "text"},
+                    {"key": "lease_start",      "type": "date"},
+                    {"key": "lease_end",        "type": "date"},
+                    {"key": "rent_amount",      "type": "currency"},
+                    {"key": "security_deposit", "type": "currency"},
+                ]
+            },
+        },
+        {
+            "name": "General Power of Attorney",
+            "file": "poa_template.docx",
+            "description": "Broad POA with durability clause",
+            "manifest": {
+                "fields": [
+                    {"key": "principal_name",    "type": "text"},
+                    {"key": "principal_address", "type": "text"},
+                    {"key": "agent_name",        "type": "text"},
+                    {"key": "agent_address",     "type": "text"},
+                    {"key": "date",              "type": "date"},
+                ]
+            },
+        },
+    ]
+    
+
+    for t in builtins:
+        insert_template(
+            name=t["name"],
+            description=t["description"],
+            manifest=t["manifest"],
+            docx_path=str(tpl_dir / t["file"]),
+        )
+
+_load_builtin_templates()
+# ===== end database bootstrap =====
+
+
+
 
 from renderer import render_docx_rtf
 from utils import extract_placeholders
@@ -83,7 +197,7 @@ def render_fields(schema: list[dict], parent: str = "") -> None:
     for field in schema:
         key, ftype = field["key"], field["type"]
         label = field.get("label", key).title()
-        path  = f"{parent}.{key}" if parent else key
+        path  = f"{parent}.{key}"
         wkey  = f"w::{path}"
 
         if ftype in ("text", "textarea"):
@@ -104,25 +218,41 @@ def render_fields(schema: list[dict], parent: str = "") -> None:
                     render_fields(field["fields"], f"{path}[{i}]")
 
 
-def collect_ctx(schema: list[dict], parent: str = "") -> dict:
-    """Collect user inputs from Streamlit session-state into a context dict."""
-    ctx = {}
+def collect_ctx(schema: list[dict], parent: str) -> dict:
+    """
+    Rebuild a context dict from Streamlit session-state, using the same
+    namespaced keys that render_fields() created.
+
+    Each widget key is   w::<parent>.<field_path>
+    where *parent* is the page / template prefix passed in.
+    """
+    ctx: dict[str, Any] = {}
+
     for field in schema:
-        key, ftype = field["key"], field["type"]
-        path  = f"{parent}.{key}" if parent else key
-        wkey  = f"w::{path}"
+        key   = field["key"]
+        ftype = field["type"]
 
-        if ftype in ("text", "textarea"):
-            ctx[key] = st.session_state.get(wkey, "")
+        path  = f"{parent}.{key}"           # always include the prefix
+        wkey  = f"w::{path}"                # full widget key in session_state
 
+        # simple scalar types
+        if ftype in ("text", "textarea", "number", "date", "currency"):
+            ctx[key] = st.session_state.get(wkey)
+
+        # repeat group → recurse for each repetition
         elif ftype == "repeat":
-            cnt_key = f"{wkey}::__count"
-            count = int(st.session_state.get(cnt_key, 1))
+            cnt = int(st.session_state.get(f"{wkey}::__count", 1))
             ctx[key] = [
-                collect_ctx(field["fields"], f"{path}[{i}]")
-                for i in range(count)
+                collect_ctx(field["fields"], parent=f"{path}[{i}]")
+                for i in range(cnt)
             ]
+
+        # fallback for any custom / future field types
+        else:
+            ctx[key] = st.session_state.get(wkey)
+
     return ctx
+
 
 # ── global CSS ──────────────────────────────────────────────────────────────
 st.markdown(
@@ -192,12 +322,15 @@ with st.sidebar:
     PAGE = st.radio(
         "Navigation",
         ["Create Template", "Create Case / Fill Form", "Generated Documents"],
+        key="nav_page"                    # good: key is stable
     )
+    
 
 # ════════════════════════════════════════════════════════════════════════════
 # 1. CREATE TEMPLATE
 # ════════════════════════════════════════════════════════════════════════════
 if PAGE == "Create Template":
+    PAGE_PREFIX = "create_tpl"
     st.header("Upload a New Template")
 
     # basic metadata
@@ -286,7 +419,7 @@ if PAGE == "Create Template":
         for row in templates:
             c = st.columns([4, 3, 1])
             c[0].markdown(row["name"])
-            c[1].markdown(row["created_at"])
+            c[1].markdown(_to_local(row["created_at"]))
 
             # ---------- fixed delete handler ----------
             if c[2].button("Delete", key=f"del_{row['id']}"):
@@ -308,69 +441,88 @@ if PAGE == "Create Template":
 # ════════════════════════════════════════════════════════════════════════════
 elif PAGE == "Create Case / Fill Form":
     st.header("Generate a Document From a Template")
-
+    
+    # ── Template picker ───────────────────────────────────────────────────────
     templates = list_templates()
-    if not templates:
-        st.error("Please upload at least one template first."); st.stop()
+    tmpl_map  = {t["name"]: t for t in templates}              # quick lookup
+    tmpl_name = st.selectbox("Choose a Template", list(tmpl_map.keys()))
 
-    tmpl_name = st.selectbox("Choose a Template", [t["name"] for t in templates])
-    tmpl_row = next(t for t in templates if t["name"] == tmpl_name)
-    manifest = json.loads(tmpl_row["manifest_json"])
+    if tmpl_name:                                              # user picked one
+        tmpl_row = tmpl_map[tmpl_name]
+        manifest = json.loads(tmpl_row["manifest_json"])
 
-    st.subheader("Fill in the Fields")
-    render_fields(manifest["fields"])
+        # prefix every widget key with page + template ID
+        PAGE_PREFIX = f"case_{tmpl_row['id']}"
 
-    doc_name = st.text_input("Document Name (Optional)")
+        # ── Fill-in form (values persist) ─────────────────────────────────────
+        with st.form("case_form", clear_on_submit=False):
+            st.subheader("Fill in the Fields")
+            render_fields(manifest["fields"], parent=PAGE_PREFIX)
 
-    bcols = st.columns(2)
-    gen_docx = bcols[0].button("Generate DOCX", type="primary")
-    gen_rtf  = bcols[1].button("Generate RTF",  type="primary")
-
-    if gen_docx or gen_rtf:
-        ctx = collect_ctx(manifest["fields"])
-
-        # create a base filename stem
-        next_case_id = len(list_cases()) + 1  # approximate preview
-        base_stem = _slug(doc_name) if doc_name else _slug(f"{tmpl_row['name']}_{next_case_id}")
-
-        docx_path, rtf_path = render_docx_rtf(
-            tmpl_row["docx_path"],
-            ctx,
-            base_name=base_stem,
-        )
-
-        case_id = insert_case(
-            tmpl_row["id"],
-            ctx,
-            docx_path,
-            rtf_path,
-            doc_name or None,
-        )
-
-        st.success(f"Generated! Case #{case_id}")
-
-        dcols = st.columns(2)
-        with open(docx_path, "rb") as fdocx:
-            dcols[0].download_button(
-                "Download DOCX",
-                fdocx,
-                file_name=f"{base_stem}.docx",
-                key=f"dl_docx_{case_id}",
+            doc_name = st.text_input(
+                "Document Name (Optional)",
+                key=f"{PAGE_PREFIX}.__doc_name"
             )
-        with open(rtf_path, "rb") as frtf:
-            dcols[1].download_button(
-                "Download RTF",
-                frtf,
-                file_name=f"{base_stem}.rtf",
-                key=f"dl_rtf_{case_id}",
-            )
+
+            col1, col2 = st.columns(2)
+            gen_docx = col1.form_submit_button("Generate DOCX", type="primary")
+            gen_rtf  = col2.form_submit_button("Generate RTF",  type="primary")
+
+            if gen_docx or gen_rtf:
+                # gather inputs using the same prefix
+                ctx = collect_ctx(manifest["fields"], parent=PAGE_PREFIX)
+
+                # build a base file-stem
+                next_case_id = len(list_cases()) + 1
+                base_stem = _slug(doc_name) if doc_name else _slug(
+                    f"{tmpl_row['name']}_{next_case_id}"
+                )
+
+                docx_path, rtf_path = render_docx_rtf(
+                    tmpl_row["docx_path"], ctx, base_name=base_stem
+                )
+
+                case_id = insert_case(
+                    tmpl_row["id"], ctx, docx_path, rtf_path, doc_name or None
+                )
+
+                st.session_state["last_gen"] = {
+                    "docx_path": docx_path,
+                    "rtf_path":  rtf_path,
+                    "base":      base_stem,
+                    "case_id":   case_id,
+                }
+                st.success(f"Generated! Case #{case_id}")
+
+        # ── Download buttons (stay after clicks) ──────────────────────────────
+        if "last_gen" in st.session_state:
+            g = st.session_state["last_gen"]
+            d1, d2 = st.columns(2)
+
+            with open(g["docx_path"], "rb") as fdocx:
+                d1.download_button(
+                    "Download DOCX",
+                    fdocx,
+                    file_name=f"{g['base']}.docx",
+                    key=f"dl_docx_{g['case_id']}",
+                )
+            with open(g["rtf_path"], "rb") as frtf:
+                d2.download_button(
+                    "Download RTF",
+                    frtf,
+                    file_name=f"{g['base']}.rtf",
+                    key=f"dl_rtf_{g['case_id']}",
+                )
+    
+    
 
 # ════════════════════════════════════════════════════════════════════════════
 # 3. GENERATED DOCUMENTS
 # ════════════════════════════════════════════════════════════════════════════
 else:  # PAGE == "Generated Documents"
+    PAGE_PREFIX = "gen_docs"
     st.header("Previously Generated Documents")
-
+    
     cases = list_cases()
     if not cases:
         st.info("No documents generated yet."); st.stop()
@@ -391,7 +543,7 @@ else:  # PAGE == "Generated Documents"
         display_name = c["doc_name"] or f"Case {c['id']}"
         cols[1].markdown(display_name)
         cols[2].markdown(c["template_name"])
-        cols[3].markdown(c["created_at"])
+        cols[3].markdown(_to_local(c["created_at"]))
 
         base = _slug(c["doc_name"]) if c["doc_name"] else _slug(f"{c['template_name']}_{c['id']}")
 

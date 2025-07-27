@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
 
+# ──────────────────────────────
+# Database location
+# ──────────────────────────────
 DB_PATH = Path("data/app.db")
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -27,13 +31,16 @@ def get_conn() -> sqlite3.Connection:
 
 
 # ──────────────────────────────
-# Schema + migrations
+# Schema creation + lightweight migrations
 # ──────────────────────────────
 def init_db() -> None:
+    """Create tables if missing, then add any new columns required by
+    newer versions. Safe to call on every start-up."""
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute(
+    # 1️⃣  Always make sure the core tables exist
+    cur.executescript(
         """
         CREATE TABLE IF NOT EXISTS templates (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,43 +49,46 @@ def init_db() -> None:
             manifest_json TEXT NOT NULL,
             docx_path     TEXT NOT NULL,
             version       INTEGER NOT NULL DEFAULT 1,
-            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at    TEXT,               -- UTC ISO string
+            is_active     INTEGER DEFAULT 1   -- soft-delete flag
         );
-        """
-    )
 
-    cur.execute(
-        """
         CREATE TABLE IF NOT EXISTS cases (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            doc_name     TEXT,
-            template_id  INTEGER NOT NULL,
-            input_json   TEXT NOT NULL,
-            docx_path    TEXT,
-            rtf_path     TEXT,
-            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_name         TEXT,
+            template_id      INTEGER NOT NULL,
+            input_json       TEXT NOT NULL,
+            docx_path        TEXT,
+            rtf_path         TEXT,
+            created_at       TEXT,            -- UTC ISO string
             FOREIGN KEY (template_id) REFERENCES templates(id)
         );
         """
     )
 
-    # add doc_name column if an old DB lacks it
+    # 2️⃣  Add columns that older DB files might lack
+    # doc_name in cases
     cur.execute("PRAGMA table_info(cases)")
     if "doc_name" not in [row[1] for row in cur.fetchall()]:
         cur.execute("ALTER TABLE cases ADD COLUMN doc_name TEXT")
 
-    # add is_active column to templates (soft-delete flag)
+    # created_at in templates
+    cur.execute("PRAGMA table_info(templates)")
+    if "created_at" not in [row[1] for row in cur.fetchall()]:
+        cur.execute("ALTER TABLE templates ADD COLUMN created_at TEXT")
+
+    # is_active in templates
     cur.execute("PRAGMA table_info(templates)")
     if "is_active" not in [row[1] for row in cur.fetchall()]:
         cur.execute("ALTER TABLE templates ADD COLUMN is_active INTEGER DEFAULT 1")
 
     conn.commit()
     conn.close()
-    
 
 
-# initialize schema when module loads
+# Initialise schema immediately when the module is imported
 init_db()
+
 
 
 # ──────────────────────────────
@@ -99,6 +109,8 @@ def get_template(template_id: int):
     return row
 
 
+
+
 def insert_template(
     name: str,
     description: str | None,
@@ -106,16 +118,23 @@ def insert_template(
     docx_path: str,
 ) -> int:
     conn = get_conn()
-    cur = conn.cursor()
+    cur  = conn.cursor()
+
+    # ISO-8601 in UTC, e.g. “2025-07-27T06:18:42Z”
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)\
+                               .isoformat(timespec="seconds") 
+
     cur.execute(
         """
-        INSERT INTO templates (name, description, manifest_json, docx_path)
-        VALUES (?, ?, ?, ?);
+        INSERT INTO templates
+              (name, description, manifest_json, docx_path, created_at)
+        VALUES (?,    ?,          ?,             ?,         ?);
         """,
-        (name, description, json.dumps(manifest), docx_path),
+        (name, description, json.dumps(manifest), docx_path, now_utc),
     )
     conn.commit()
     return cur.lastrowid
+
 
 
 
@@ -134,6 +153,7 @@ def list_templates(active_only: bool = True) -> List[sqlite3.Row]:
 # ──────────────────────────────
 # Case helpers
 # ──────────────────────────────
+# db.py  – keep everything else the same
 def insert_case(
     template_id: int,
     inputs: dict[str, Any],
@@ -142,18 +162,29 @@ def insert_case(
     doc_name: str | None,
 ) -> int:
     conn = get_conn()
-    cur = conn.cursor()
+    cur  = conn.cursor()
+
+    now_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
     cur.execute(
         """
         INSERT INTO cases
-          (template_id, input_json, docx_path, rtf_path, doc_name)
+          (template_id, input_json, docx_path, rtf_path,
+           doc_name,    created_at)
         VALUES
-          (?, ?, ?, ?, ?);
+          (?,           ?,          ?,         ?, 
+           ?,           ?);
         """,
-        (template_id, json.dumps(inputs), docx_path, rtf_path, doc_name),
+        (template_id,
+         json.dumps(inputs),
+         docx_path,
+         rtf_path,
+         doc_name,
+         now_utc),          # ← new value goes here
     )
     conn.commit()
     return cur.lastrowid
+
 
 
 def list_cases() -> List[sqlite3.Row]:
@@ -167,6 +198,7 @@ def list_cases() -> List[sqlite3.Row]:
         """
     )
     return cur.fetchall()
+
 
 def delete_case(case_id: int, docx_path: str | None = None, rtf_path: str | None = None):
     """
