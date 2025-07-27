@@ -1,0 +1,13 @@
+{
+  "title": "Civil Complaint v1",
+  "fields": [
+    {"key": "case_number", "label": "Case number", "type": "text"},
+    {"key": "plaintiffs", "label": "Plaintiffs", "type": "repeat", "fields": [
+      {"key": "name", "label": "Name", "type": "text"},
+      {"key": "address", "label": "Address", "type": "textarea"}
+    ]},
+    {"key": "defendants", "label": "Defendants", "type": "repeat", "fields": [
+      {"key": "name", "label": "Name", "type": "text"}
+    ]}
+  ]
+}
