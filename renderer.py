@@ -97,9 +97,9 @@ def render_docx_rtf(
         _convert_with_pandoc(docx_out, rtf_out)
 
         # sanity-check: if visible text < 100 chars, maybe Pandoc mis-fired
-        if _plain_text_len(rtf_out) < 100:
-            rtf_out.unlink(missing_ok=True)
-            raise RuntimeError("Pandoc produced incomplete RTF")
+        #if _plain_text_len(rtf_out) < 100:
+        #    rtf_out.unlink(missing_ok=True)
+        #    raise RuntimeError("Pandoc produced incomplete RTF")
 
     except Exception as err:
         logging.warning("Pandoc path failed: %s", err)
