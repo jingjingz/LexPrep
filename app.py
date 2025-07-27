@@ -578,7 +578,14 @@ with tab3:
             cols[5].markdown("—")
 
         # Delete button
+        # app.py  – inside the Generated Documents loop
         if cols[6].button("🗑️", key=f"del_case_{c['id']}"):
-            delete_case(c["id"], c["docx_path"], c["rtf_path"])   # remove row + files
-            st.experimental_rerun()                               # refresh table
+            delete_case(c["id"], c["docx_path"], c["rtf_path"])
+
+            # 🔑 clear the stale “last generated” cache
+            if st.session_state.get("last_gen", {}).get("case_id") == c["id"]:
+                st.session_state.pop("last_gen")
+
+            st.experimental_rerun()
+                                  # refresh table
         
