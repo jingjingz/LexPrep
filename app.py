@@ -324,23 +324,28 @@ st.markdown(
 )
 
 # ── sidebar navigation ──────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown(
-        f'<div class="lex-title">{APP_NAME}</div>'
-        f'<div class="lex-ver">{APP_VERSION}</div>',
-        unsafe_allow_html=True,
-    )
-    PAGE = st.radio(
-        "Navigation",
-        ["Create Template", "Create Case / Fill Form", "Generated Documents"],
-        key="nav_page"                    # good: key is stable
-    )
+# App name and version display at the top (instead of sidebar)
+st.markdown(
+    f'<div class="lex-title">{APP_NAME}</div>'
+    f'<div class="lex-ver">{APP_VERSION}</div>',
+    unsafe_allow_html=True,
+)
+
+# Tab-based navigation (mobile-friendly)
+tab1, tab2, tab3 = st.tabs([
+    "Create Template", 
+    "Create Case / Fill Form", 
+    "Generated Documents"
+])
+
+
+
     
 
 # ════════════════════════════════════════════════════════════════════════════
 # 1. CREATE TEMPLATE
 # ════════════════════════════════════════════════════════════════════════════
-if PAGE == "Create Template":
+with tab1:
     PAGE_PREFIX = "create_tpl"
     st.header("Upload a New Template")
 
@@ -433,7 +438,7 @@ if PAGE == "Create Template":
             c[1].markdown(_to_local(row["created_at"]))
 
             # ---------- fixed delete handler ----------
-            if c[2].button("Delete", key=f"del_{row['id']}"):
+            if c[2].button("Delete", key=f"del_tpl_{row['id']}"):
                 conn = get_conn()
                 conn.execute(
                     "UPDATE templates SET is_active = 0 WHERE id = ?",
@@ -450,7 +455,7 @@ if PAGE == "Create Template":
 # ════════════════════════════════════════════════════════════════════════════
 # 2. CREATE CASE / FILL FORM
 # ════════════════════════════════════════════════════════════════════════════
-elif PAGE == "Create Case / Fill Form":
+with tab2:
     st.header("Generate a Document From a Template")
     
     # ── Template picker ───────────────────────────────────────────────────────
@@ -530,7 +535,7 @@ elif PAGE == "Create Case / Fill Form":
 # ════════════════════════════════════════════════════════════════════════════
 # 3. GENERATED DOCUMENTS
 # ════════════════════════════════════════════════════════════════════════════
-else:  # PAGE == "Generated Documents"
+with tab3:
     PAGE_PREFIX = "gen_docs"
     st.header("Previously Generated Documents")
     
@@ -573,7 +578,7 @@ else:  # PAGE == "Generated Documents"
             cols[5].markdown("—")
 
         # Delete button
-        if cols[6].button("🗑️", key=f"del_{c['id']}"):
+        if cols[6].button("🗑️", key=f"del_case_{c['id']}"):
             delete_case(c["id"], c["docx_path"], c["rtf_path"])   # remove row + files
             st.experimental_rerun()                               # refresh table
         
