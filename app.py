@@ -18,14 +18,39 @@ from pathlib import Path
 
 import streamlit as st
 
+st.markdown(
+    """
+    <style>
+    .lex-title {
+        font-family: 'Georgia', serif;
+        font-size: 36px;
+        font-weight: 600;
+        color: #2F2F2F;
+        margin-bottom: 0.2rem;
+    }
+    .lex-ver {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 1.5rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+
 # ── project modules ─────────────────────────────────────────────────────────
 from db import (
+    init_db,
     insert_template,
     list_templates,
+    get_template,
     insert_case,
     list_cases,
-    get_conn,
+    delete_case,           
 )
+
 from renderer import render_docx_rtf
 from utils import extract_placeholders
 
@@ -350,18 +375,19 @@ else:  # PAGE == "Generated Documents"
     if not cases:
         st.info("No documents generated yet."); st.stop()
 
-    h = st.columns([1, 4, 3, 3, 1, 1])
+    h = st.columns([1, 4, 3, 3, 2, 2, 2])   
     h[0].markdown("**ID**")
     h[1].markdown("**Document Name**")
     h[2].markdown("**Template**")
     h[3].markdown("**Date & Time**")
     h[4].markdown("**DOCX**")
     h[5].markdown("**RTF**")
+    h[6].markdown("**Delete**")             
+    
 
     for c in cases:
-        cols = st.columns([1, 4, 3, 3, 1, 1])
+        cols = st.columns([1, 4, 3, 3, 2, 2, 2])   # ← seven columns now
         cols[0].markdown(str(c["id"]))
-
         display_name = c["doc_name"] or f"Case {c['id']}"
         cols[1].markdown(display_name)
         cols[2].markdown(c["template_name"])
@@ -369,24 +395,22 @@ else:  # PAGE == "Generated Documents"
 
         base = _slug(c["doc_name"]) if c["doc_name"] else _slug(f"{c['template_name']}_{c['id']}")
 
+        # DOCX download
         if os.path.exists(c["docx_path"]):
             with open(c["docx_path"], "rb") as fd:
-                cols[4].download_button(
-                    "📄",
-                    fd,
-                    file_name=f"{base}.docx",
-                    key=f"docx_{c['id']}",
-                )
+                cols[4].download_button("📄", fd, file_name=f"{base}.docx", key=f"docx_{c['id']}")
         else:
             cols[4].markdown("—")
 
+        # RTF download
         if os.path.exists(c["rtf_path"]):
             with open(c["rtf_path"], "rb") as fr:
-                cols[5].download_button(
-                    "📝",
-                    fr,
-                    file_name=f"{base}.rtf",
-                    key=f"rtf_{c['id']}",
-                )
+                cols[5].download_button("📝", fr, file_name=f"{base}.rtf", key=f"rtf_{c['id']}")
         else:
             cols[5].markdown("—")
+
+        # Delete button
+        if cols[6].button("🗑️", key=f"del_{c['id']}"):
+            delete_case(c["id"], c["docx_path"], c["rtf_path"])   # remove row + files
+            st.experimental_rerun()                               # refresh table
+        

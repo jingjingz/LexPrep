@@ -84,6 +84,21 @@ init_db()
 # ──────────────────────────────
 # Template helpers
 # ──────────────────────────────
+def get_template(template_id: int):
+    """
+    Return the row for a single template.
+    """
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row          # if you haven't set it globally
+    cur  = conn.execute(
+        "SELECT * FROM templates WHERE id = ?",
+        (template_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+
 def insert_template(
     name: str,
     description: str | None,
@@ -152,3 +167,18 @@ def list_cases() -> List[sqlite3.Row]:
         """
     )
     return cur.fetchall()
+
+def delete_case(case_id: int, docx_path: str | None = None, rtf_path: str | None = None):
+    """
+    Delete one generated‐document record and optionally its files.
+    """
+    conn = get_conn()
+    conn.execute("DELETE FROM cases WHERE id = ?", (case_id,))
+    conn.commit()
+    conn.close()
+
+    # remove the files from disk (comment these lines if you want to keep them)
+    for p in (docx_path, rtf_path):
+        if p and Path(p).exists():
+            Path(p).unlink(missing_ok=True)
+
