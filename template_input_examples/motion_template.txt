@@ -1,0 +1,19 @@
+{
+  "title": "Civil Motion Template",
+  "fields": [
+    {"key": "court_name",        "label": "Court Name",               "type": "text"},
+    {"key": "case_number",       "label": "Case Number",              "type": "text"},
+    {"key": "plaintiff_name",    "label": "Plaintiff Name",           "type": "text"},
+    {"key": "defendant_name",    "label": "Defendant Name",           "type": "text"},
+    {"key": "motion_title",      "label": "Motion Title",             "type": "text"},
+    {"key": "hearing_date",      "label": "Hearing Date",             "type": "text"},
+    {"key": "department",        "label": "Court Department",         "type": "text"},
+    {"key": "court_address",     "label": "Court Address",            "type": "text"},
+    {"key": "requested_relief",  "label": "Requested Relief",         "type": "textarea"},
+    {"key": "supporting_facts",  "label": "Statement of Facts",       "type": "textarea"},
+    {"key": "legal_argument",    "label": "Legal Argument",           "type": "textarea"},
+    {"key": "conclusion_text",   "label": "Conclusion",               "type": "textarea"},
+    {"key": "attorney_name",     "label": "Attorney Name",            "type": "text"},
+    {"key": "signature_date",    "label": "Signature Date",           "type": "text"}
+  ]
+}
