@@ -3,7 +3,7 @@
 SQLite helper layer for LexPrep
 -------------------------------
 • Two tables: templates, cases
-• Lightweight auto-migration keeps schema in sync (adds columns if missing)
+• Lightweight auto-migration keeps schema up to date
 """
 
 from __future__ import annotations
@@ -17,23 +17,22 @@ DB_PATH = Path("data/app.db")
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Connection helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────
+# Connection helper
+# ──────────────────────────────
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Schema & lightweight migrations
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────
+# Schema + migrations
+# ──────────────────────────────
 def init_db() -> None:
     conn = get_conn()
     cur = conn.cursor()
 
-    # -- templates table -----------------------------------------------------
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS templates (
@@ -48,7 +47,6 @@ def init_db() -> None:
         """
     )
 
-    # -- cases table ---------------------------------------------------------
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS cases (
@@ -64,30 +62,30 @@ def init_db() -> None:
         """
     )
 
-    # --- lightweight migration: ensure doc_name column exists --------------
-    cur.execute("PRAGMA table_info(cases);")
-    cols = [row[1] for row in cur.fetchall()]
-    if "doc_name" not in cols:
-        cur.execute("ALTER TABLE cases ADD COLUMN doc_name TEXT;")
+    # add doc_name column if an old DB lacks it
+    cur.execute("PRAGMA table_info(cases)")
+    if "doc_name" not in [row[1] for row in cur.fetchall()]:
+        cur.execute("ALTER TABLE cases ADD COLUMN doc_name TEXT")
 
     conn.commit()
     conn.close()
 
 
-# Initialize schema on import
+# initialize schema when module loads
 init_db()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────
 # Template helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────
 def insert_template(
     name: str,
     description: str | None,
     manifest: dict,
     docx_path: str,
 ) -> int:
-    conn, cur = get_conn(), get_conn().cursor()
+    conn = get_conn()
+    cur = conn.cursor()
     cur.execute(
         """
         INSERT INTO templates (name, description, manifest_json, docx_path)
@@ -105,29 +103,24 @@ def list_templates() -> List[sqlite3.Row]:
     return cur.fetchall()
 
 
-def get_template(template_id: int) -> sqlite3.Row | None:
-    cur = get_conn().cursor()
-    cur.execute("SELECT * FROM templates WHERE id = ?;", (template_id,))
-    return cur.fetchone()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────
 # Case helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────
 def insert_case(
     template_id: int,
     inputs: dict[str, Any],
-    docx_path: str | None = None,
-    rtf_path: str | None = None,
-    doc_name: str | None = None,
+    docx_path: str | None,
+    rtf_path: str | None,
+    doc_name: str | None,
 ) -> int:
-    conn, cur = get_conn(), get_conn().cursor()
+    conn = get_conn()
+    cur = conn.cursor()
     cur.execute(
         """
         INSERT INTO cases
-            (template_id, input_json, docx_path, rtf_path, doc_name)
+          (template_id, input_json, docx_path, rtf_path, doc_name)
         VALUES
-            (?, ?, ?, ?, ?);
+          (?, ?, ?, ?, ?);
         """,
         (template_id, json.dumps(inputs), docx_path, rtf_path, doc_name),
     )
@@ -146,21 +139,3 @@ def list_cases() -> List[sqlite3.Row]:
         """
     )
     return cur.fetchall()
-
-
-def get_case(case_id: int) -> sqlite3.Row | None:
-    cur = get_conn().cursor()
-    cur.execute(
-        """
-        SELECT
-            c.*,
-            t.name          AS template_name,
-            t.manifest_json,
-            t.docx_path     AS template_docx_path
-        FROM cases c
-        JOIN templates t ON t.id = c.template_id
-        WHERE c.id = ?;
-        """,
-        (case_id,),
-    )
-    return cur.fetchone()
