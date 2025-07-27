@@ -14,10 +14,56 @@ import json
 import os
 import re
 import tempfile
+
+
 import streamlit as st
-from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo   # Python ≥3.9
+
+# ── Read query-params from both old and new Streamlit APIs ───────────────────
+def _get_query_params() -> dict:
+    try:                       # Streamlit ≥1.31
+        return st.query_params
+    except AttributeError:     # older versions
+        return st.experimental_get_query_params()
+
+params = _get_query_params()
+
+# ── Prefer ?tz=… if the page already has it ──────────────────────────────────
+user_tz = None
+if "tz" in params:
+    raw = params["tz"]
+    user_tz = raw[0] if isinstance(raw, list) else raw
+
+# ── Otherwise guess from the host machine; fall back to UTC ──────────────────
+if not user_tz:
+    try:
+        user_tz = datetime.now().astimezone().tzinfo.key
+    except AttributeError:      # some OSes return datetime.timezone with no .key
+        user_tz = "UTC"
+
+# ── Time-zone objects you can use throughout the app ─────────────────────────
+LOCAL_TZ = ZoneInfo(user_tz)
+
+def now_local() -> datetime:
+    """Return an aware datetime in the visitor’s timezone."""
+    return datetime.now(tz=LOCAL_TZ)
+
+def _to_local(iso_ts: str, fmt: str = "%Y-%m-%d %I:%M %p") -> str:
+    """
+    Parse an ISO timestamp (stored UTC if tz-naive),
+    convert it to the visitor’s zone, and format nicely.
+    """
+    dt = datetime.fromisoformat(iso_ts)
+    if dt.tzinfo is None:          # assume UTC if no zone info
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    return dt.astimezone(LOCAL_TZ).strftime(fmt)
+
+
+
 
 # ── Template location ─────────────────────────────────────────────────────────
+from pathlib import Path
 TEMPLATE_DIR = Path(__file__).parent / "default_templates"   # ← update path
 
 def load_template(name: str) -> Path:
@@ -25,43 +71,6 @@ def load_template(name: str) -> Path:
     return TEMPLATE_DIR / f"{name}.docx"
 
 
-# ── Calculating correct time zones─────────────────────────────────────────────────────────
-from datetime import datetime
-from zoneinfo import ZoneInfo          # std-lib ≥3.9
-import re
-
-# Detect the browser/host machine’s zone once
-LOCAL_TZ = datetime.now().astimezone().tzinfo
-
-def _to_local(iso_ts: str) -> str:
-    """
-    Convert an ISO-8601 timestamp that the DB stored in UTC
-    (e.g. “2025-07-27T07:07:26+00:00” or “…Z”) to the local timezone
-    and return a short, readable string like “2025-07-27 00:07”.
-
-    Handles legacy glitches such as “…+00:00Z” and “…+00:00+00:00”.
-    """
-    try:
-        # 1️⃣ Collapse the two bad patterns we introduced earlier
-        # “+00:00Z”  → “+00:00”
-        # “+00:00+00:00” → “+00:00”
-        iso_ts = re.sub(r'\+00:00(?:Z|\+00:00)$', '+00:00', iso_ts)
-
-        # 2️⃣ Normalise a plain “Z” suffix to “+00:00”
-        if iso_ts.endswith("Z"):
-            iso_ts = iso_ts[:-1] + "+00:00"
-
-        dt = datetime.fromisoformat(iso_ts)
-
-        # 3️⃣ If the string was naïve, assume UTC
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-
-        # 4️⃣ Return in local zone, nice format
-        return dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        # Any parsing hiccup: fall back to the raw text
-        return iso_ts
 
 
 # ── Title style ─────────────────────────────────────────────────────────
@@ -499,7 +508,8 @@ with tab2:
                 )
 
                 case_id = insert_case(
-                    tmpl_row["id"], ctx, docx_path, rtf_path, doc_name or None
+                    tmpl_row["id"], ctx, docx_path, rtf_path, doc_name or None, 
+                    created_at=now_local().isoformat(timespec="seconds")
                 )
 
                 st.session_state["last_gen"] = {

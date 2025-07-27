@@ -154,33 +154,42 @@ def list_templates(active_only: bool = True) -> List[sqlite3.Row]:
 # Case helpers
 # ──────────────────────────────
 # db.py  – keep everything else the same
+# At the top of db.py, ensure you have:
+from datetime import datetime, timezone
+
 def insert_case(
     template_id: int,
     inputs: dict[str, Any],
     docx_path: str | None,
     rtf_path: str | None,
     doc_name: str | None,
+    created_at: str | None = None,
 ) -> int:
+    """
+    Insert a generated document record into the cases table,
+    stamping it with a UTC ISO timestamp if none was provided.
+    """
     conn = get_conn()
     cur  = conn.cursor()
 
-    now_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
+    if created_at is None:
+        created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        
     cur.execute(
         """
         INSERT INTO cases
           (template_id, input_json, docx_path, rtf_path,
            doc_name,    created_at)
-        VALUES
-          (?,           ?,          ?,         ?, 
-           ?,           ?);
+        VALUES (?, ?, ?, ?, ?, ?);
         """,
-        (template_id,
-         json.dumps(inputs),
-         docx_path,
-         rtf_path,
-         doc_name,
-         now_utc),          # ← new value goes here
+        (
+            template_id,
+            json.dumps(inputs),
+            docx_path,
+            rtf_path,
+            doc_name,
+            created_at,
+        ),
     )
     conn.commit()
     return cur.lastrowid
