@@ -10,12 +10,19 @@ LexPrep – Streamlit prototype
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+load_dotenv()   # now os.environ["OPENAI_API_KEY"] is available
+
 import json
 import os
 import re
 import tempfile
 import streamlit as st
 from pathlib import Path
+
+from utils import extract_text_from_bytes, extract_fields_from_text, save_template_file
+from db import create_template  # see next section
+
 
 # ── Template location ─────────────────────────────────────────────────────────
 TEMPLATE_DIR = Path(__file__).parent / "default_templates"   # ← update path
@@ -332,13 +339,12 @@ st.markdown(
 )
 
 # Tab-based navigation (mobile-friendly)
-tab1, tab2, tab3 = st.tabs([
-    "Create Template", 
-    "Create Case / Fill Form", 
-    "Generated Documents"
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Create Template",
+    "Create Case / Fill Form",
+    "Generated Documents",
+    "Auto-parse Template"
 ])
-
-
 
     
 
@@ -465,7 +471,39 @@ with tab2:
 
     if tmpl_name:                                              # user picked one
         tmpl_row = tmpl_map[tmpl_name]
-        manifest = json.loads(tmpl_row["manifest_json"])
+        
+        # ── Decode both manifest and parsed fields ────────────────────────────────────
+        # Use .get() so we don’t KeyError if one of these columns is missing
+        raw_manifest = tmpl_row.get("manifest_json", "{}") or "{}"
+        raw_fields   = tmpl_row.get("fields_json",   "[]") or "[]"
+
+        manifest = json.loads(raw_manifest)
+        fields   = json.loads(raw_fields)
+
+        # ── Decide which schema to use ────────────────────────────────────────────────
+        # If OpenAI-parsed fields exist, use them; otherwise fallback to manifest keys
+        if fields:
+            field_defs = fields
+        else:
+            # turn each manifest key into a simple text field
+            field_defs = [{"name": key, "type": "text"} for key in manifest.keys()]
+
+        # ── Render your inputs ─────────────────────────────────────────────────────────
+        ctx = {}  # or whatever context dict you’re filling
+        for fld in field_defs:
+            label = fld["name"]
+            fld_type = fld.get("type", "text")
+
+            if fld_type == "text":
+                ctx[label] = st.text_input(label)
+            elif fld_type == "date":
+                ctx[label] = st.date_input(label)
+            elif fld_type == "number":
+                ctx[label] = st.number_input(label)
+            else:
+                # unknown type: treat as text
+                ctx[label] = st.text_input(label)
+        
 
         # prefix every widget key with page + template ID
         PAGE_PREFIX = f"case_{tmpl_row['id']}"
@@ -473,7 +511,21 @@ with tab2:
         # ── Fill-in form (values persist) ─────────────────────────────────────
         with st.form("case_form", clear_on_submit=False):
             st.subheader("Fill in the Fields")
-            render_fields(manifest["fields"], parent=PAGE_PREFIX)
+            
+            # decode any OpenAI‐parsed fields
+            raw_fields = tmpl_row.get("fields_json") or "[]"
+            parsed_fields = json.loads(raw_fields)
+
+            # choose which set of definitions to render
+            if parsed_fields:
+                field_defs = parsed_fields
+            else:
+                # legacy: manifest["fields"] was your old schema
+                field_defs = manifest.get("fields", [])
+
+            # now render them
+            render_fields(field_defs, parent=PAGE_PREFIX)
+            
 
             doc_name = st.text_input(
                 "Document Name (Optional)",
@@ -588,4 +640,46 @@ with tab3:
 
             st.experimental_rerun()
                                   # refresh table
-        
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 4. Auto-parse Template tab
+# ════════════════════════════════════════════════════════════════════════════
+with tab4:
+    st.header("Auto-parse a Legal Document into a Template")
+
+    uploaded = st.file_uploader("Upload a DOCX or PDF", type=["docx", "pdf"])
+    if not uploaded:
+        st.info("Upload a file to get started.")
+    else:
+        raw_bytes = uploaded.read()
+
+        # extract plain text from the upload (DOCX or PDF)
+        text = extract_text_from_bytes(raw_bytes, uploaded.type)
+        st.markdown("**Preview of extracted text:**")
+        st.text_area("", text[:1000], height=200)
+
+        if st.button("Parse Fields with OpenAI"):
+            with st.spinner("Calling OpenAI…"):
+                fields = extract_fields_from_text(text)
+            st.success(f"Detected {len(fields)} fields")
+            st.json(fields)
+
+            template_name = st.text_input(
+                "Template name",
+                value=uploaded.name.rsplit(".", 1)[0]
+            )
+
+            if st.button("Save as Template"):
+                # 1) save the original file bytes
+                path = save_template_file(uploaded.name, raw_bytes)
+
+                # 2) persist into SQLite with parsed fields
+                create_template(
+                    name      = template_name,
+                    file_path = path,
+                    fields    = fields,
+                )
+
+                st.success(f"Template “{template_name}” saved with {len(fields)} fields.")
+  

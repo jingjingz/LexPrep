@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
 
+
 # ──────────────────────────────
 # Database location
 # ──────────────────────────────
@@ -47,10 +48,11 @@ def init_db() -> None:
             name          TEXT NOT NULL,
             description   TEXT,
             manifest_json TEXT NOT NULL,
+            fields_json   TEXT,                   -- JSON array of parsed field definitions
             docx_path     TEXT NOT NULL,
             version       INTEGER NOT NULL DEFAULT 1,
-            created_at    TEXT,               -- UTC ISO string
-            is_active     INTEGER DEFAULT 1   -- soft-delete flag
+            created_at    TEXT,                   -- UTC ISO string
+            is_active     INTEGER DEFAULT 1       -- soft-delete flag
         );
 
         CREATE TABLE IF NOT EXISTS cases (
@@ -60,12 +62,12 @@ def init_db() -> None:
             input_json       TEXT NOT NULL,
             docx_path        TEXT,
             rtf_path         TEXT,
-            created_at       TEXT,            -- UTC ISO string
+            created_at       TEXT,                -- UTC ISO string
             FOREIGN KEY (template_id) REFERENCES templates(id)
         );
         """
     )
-
+    
     # 2️⃣  Add columns that older DB files might lack
     # doc_name in cases
     cur.execute("PRAGMA table_info(cases)")
@@ -78,12 +80,20 @@ def init_db() -> None:
         cur.execute("ALTER TABLE templates ADD COLUMN created_at TEXT")
 
     # is_active in templates
+    # is_active in templates
     cur.execute("PRAGMA table_info(templates)")
     if "is_active" not in [row[1] for row in cur.fetchall()]:
         cur.execute("ALTER TABLE templates ADD COLUMN is_active INTEGER DEFAULT 1")
 
+    # ── add fields_json if older DB lacks it ───────────────────────────────────
+    cur.execute("PRAGMA table_info(templates)")
+    if "fields_json" not in [row[1] for row in cur.fetchall()]:
+        cur.execute("ALTER TABLE templates ADD COLUMN fields_json TEXT")
+
     conn.commit()
     conn.close()
+    
+    
 
 
 # Initialise schema immediately when the module is imported
@@ -94,6 +104,35 @@ init_db()
 # ──────────────────────────────
 # Template helpers
 # ──────────────────────────────
+
+def create_template(name: str, file_path: str, fields: list[dict]) -> None:
+    """
+    Insert or update a parsed template:
+      - name:       user-friendly template name
+      - file_path:  path where the uploaded .docx/pdf is stored
+      - fields:     list of {"name":..., "type":...}, will be JSON-encoded
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT OR REPLACE INTO templates
+           (name, manifest_json, fields_json, docx_path, created_at)
+        VALUES (?, ?, ?, ?, datetime('now'));
+        """,
+        (
+            name,
+            json.dumps({}),        # dummy manifest to satisfy NOT NULL
+            json.dumps(fields),    # your parsed field definitions
+            file_path
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    
+    
+    
 def get_template(template_id: int):
     """
     Return the row for a single template.
@@ -138,15 +177,70 @@ def insert_template(
 
 
 
-def list_templates(active_only: bool = True) -> List[sqlite3.Row]:
-    cur = get_conn().cursor()
+
+def list_templates(active_only: bool = True) -> List[dict]:
+    """
+    Returns all templates (optionally only active ones) as dicts with:
+      - id
+      - name
+      - manifest (decoded JSON)
+      - fields (decoded JSON)
+      - docx_path
+      - version
+      - created_at
+      - is_active
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+
     if active_only:
-        cur.execute(
-            "SELECT * FROM templates WHERE is_active = 1 ORDER BY created_at DESC"
-        )
-    else:  # include archived templates
-        cur.execute("SELECT * FROM templates ORDER BY created_at DESC")
-    return cur.fetchall()
+        cur.execute("""
+            SELECT
+                id,
+                name,
+                manifest_json,
+                fields_json,
+                docx_path,
+                version,
+                created_at,
+                is_active
+            FROM templates
+            WHERE is_active = 1
+            ORDER BY created_at DESC
+        """)
+    else:
+        cur.execute("""
+            SELECT
+                id,
+                name,
+                manifest_json,
+                fields_json,
+                docx_path,
+                version,
+                created_at,
+                is_active
+            FROM templates
+            ORDER BY created_at DESC
+        """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    templates = []
+    for row in rows:
+        templates.append({
+            "id":         row[0],
+            "name":       row[1],
+            "manifest":   json.loads(row[2] or "{}"),
+            "fields":     json.loads(row[3] or "[]"),
+            "docx_path":  row[4],
+            "version":    row[5],
+            "created_at": row[6],
+            "is_active":  bool(row[7]),
+        })
+
+    return templates
+
 
 
 
@@ -213,4 +307,7 @@ def delete_case(case_id: int, docx_path: str | None = None, rtf_path: str | None
     for p in (docx_path, rtf_path):
         if p and Path(p).exists():
             Path(p).unlink(missing_ok=True)
+
+
+
 
