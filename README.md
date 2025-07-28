@@ -153,5 +153,5 @@ All braces must be plain text (not in content‑controls).
 - [Streamlit](https://streamlit.io) – UI framework
 - [python‑docx](https://python-docx.readthedocs.io/) & [docxtpl](https://docxtpl.readthedocs.io/) – DOCX parsing & templating
 - [Pandoc](https://pandoc.org) & [LibreOffice](https://www.libreoffice.org/) – document conversion
-- [Mango](https://ibb.co/hxq5NBDj) - The cat
+- [Mango](https://freeimage.host/i/FvE74Tl) - The cat
 
