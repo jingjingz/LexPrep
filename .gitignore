@@ -22,3 +22,4 @@ logs/
 output/
 venv/
 __pycache__/
+.env
